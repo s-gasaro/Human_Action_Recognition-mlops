@@ -1,4 +1,5 @@
 import io
+import json
 import threading
 
 import numpy as np
@@ -12,11 +13,21 @@ _lock = threading.Lock()
 _cache = {}
 
 
+def _disk_version():
+    """Model version in metadata.json (changes when any replica promotes a new model)."""
+    try:
+        return json.loads((MODELS_DIR / "metadata.json").read_text()).get("version", 1)
+    except (OSError, ValueError):
+        return None
+
+
 def get_model():
-    """Load the saved model once and reuse it."""
+    """Load the saved model and reuse it; reload if metadata.json shows a new version."""
     with _lock:
-        if "model" not in _cache:
+        version = _disk_version()
+        if "model" not in _cache or _cache.get("version") != version:
             _cache["model"], _cache["classes"] = load_model(MODELS_DIR)
+            _cache["version"] = version
         return _cache["model"], _cache["classes"]
 
 

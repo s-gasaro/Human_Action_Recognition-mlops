@@ -1,12 +1,13 @@
 import sqlite3
+import os
 from datetime import datetime
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "app.db"
+DB_PATH = Path(os.getenv("DB_PATH", Path(__file__).resolve().parent.parent / "app.db"))
 
 
 def _conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)  # several API replicas may share this file
     conn.row_factory = sqlite3.Row
     return conn
 

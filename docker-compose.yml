@@ -1,0 +1,32 @@
+services:
+  api:
+    build: .
+    expose:
+      - "8000"          # no fixed host port, so it scales with --scale api=N
+    volumes:
+      - models:/app/models
+      - shared:/app/shared   # uploads/ and the SQLite db
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+
+  ui:
+    build:
+      context: .
+      dockerfile: ui/Dockerfile
+    environment:
+      API_URL: http://nginx:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - nginx
+
+volumes:
+  models:
+  shared:

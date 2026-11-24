@@ -1,0 +1,15 @@
+.git
+.gitignore
+notebook
+data/train
+data/test
+data/*.csv
+!data/splits.csv
+uploads
+*.db
+__pycache__
+*.pyc
+.venv
+venv
+.streamlit/secrets.toml
+models/versions

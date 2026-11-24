@@ -1,4 +1,5 @@
 import io
+import os
 import json
 import shutil
 import sys
@@ -18,7 +19,7 @@ import prediction
 from preprocessing import DATA_DIR, make_dataset
 
 ROOT = Path(__file__).resolve().parent.parent
-UPLOAD_DIR = ROOT / "uploads"
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", ROOT / "uploads"))
 MODEL_FILES = ("har_model.h5", "class_names.json", "metadata.json")
 ALLOWED_EXT = {".jpg", ".jpeg", ".png"}
 MAX_BYTES = 10 * 1024 * 1024
@@ -34,8 +35,9 @@ stats = {"predictions": 0, "total_latency": 0.0}
 
 @app.on_event("startup")
 def startup():
+    db.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     db.init_db()
-    UPLOAD_DIR.mkdir(exist_ok=True)
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _metadata():
