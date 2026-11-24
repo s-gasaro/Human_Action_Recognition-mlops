@@ -32,9 +32,8 @@ def get_class_names(df):
 def augmentation():
     return tf.keras.Sequential([
         tf.keras.layers.RandomFlip("horizontal"),
-        tf.keras.layers.RandomRotation(0.1),
-        tf.keras.layers.RandomZoom(0.1),
-        tf.keras.layers.RandomContrast(0.1),
+        tf.keras.layers.RandomRotation(0.05),
+        tf.keras.layers.RandomZoom(0.05),
     ])
 
 

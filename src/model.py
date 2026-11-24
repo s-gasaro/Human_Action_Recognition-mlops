@@ -46,7 +46,7 @@ def _callbacks():
 
 
 def train(model, train_ds, val_ds, epochs=15):
-    return model.fit(train_ds, validation_data=val_ds, epochs=epochs, callbacks=_callbacks())
+    return model.fit(train_ds, validation_data=val_ds, epochs=epochs, callbacks=_callbacks(), verbose=2)
 
 
 def evaluate(model, ds):
