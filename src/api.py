@@ -1,0 +1,169 @@
+import io
+import json
+import shutil
+import sys
+import time
+import uuid
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # allow `uvicorn src.api:app`
+
+import pandas as pd
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from PIL import Image
+
+import database as db
+import model as hm
+import prediction
+from preprocessing import TRAIN_DIR, load_splits, make_dataset
+
+ROOT = Path(__file__).resolve().parent.parent
+UPLOAD_DIR = ROOT / "uploads"
+MODEL_FILES = ("har_model.h5", "class_names.json", "metadata.json")
+ALLOWED_EXT = {".jpg", ".jpeg", ".png"}
+MAX_BYTES = 10 * 1024 * 1024
+ORIGINAL_SAMPLE = 1000
+
+app = FastAPI(title="Human Action Recognition API")
+START = time.time()
+stats = {"predictions": 0, "total_latency": 0.0}
+
+
+@app.on_event("startup")
+def startup():
+    db.init_db()
+    UPLOAD_DIR.mkdir(exist_ok=True)
+
+
+def _metadata():
+    path = hm.MODELS_DIR / "metadata.json"
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def _model_ready():
+    return (hm.MODELS_DIR / "har_model.h5").exists()
+
+
+async def _read_image(file: UploadFile):
+    """Read and validate an uploaded image; returns bytes."""
+    name = file.filename or ""
+    if Path(name).suffix.lower() not in ALLOWED_EXT:
+        raise HTTPException(400, f"{name}: only .jpg, .jpeg and .png files are accepted.")
+    data = await file.read()
+    if not data or len(data) > MAX_BYTES:
+        raise HTTPException(400, f"{name}: file is empty or larger than 10 MB.")
+    try:
+        Image.open(io.BytesIO(data)).verify()
+    except Exception:
+        raise HTTPException(400, f"{name} is not a valid image.")
+    return data
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok" if _model_ready() else "no_model",
+            "model_version": _metadata().get("version", 1) if _model_ready() else None,
+            "uptime_seconds": round(time.time() - START, 1)}
+
+
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)):
+    if not _model_ready():
+        raise HTTPException(503, "No trained model found in models/. Train and save a model first.")
+    data = await _read_image(file)
+    t = time.time()
+    result = prediction.predict(data)
+    stats["predictions"] += 1
+    stats["total_latency"] += time.time() - t
+    return result
+
+
+@app.post("/upload")
+async def upload(files: list[UploadFile] = File(...), label: str = Form(...)):
+    if not _model_ready():
+        raise HTTPException(503, "No trained model found, so valid labels are unknown.")
+    _, class_names = prediction.get_model()
+    if label not in class_names:
+        raise HTTPException(400, f"Unknown label {label}. Valid labels: {class_names}")
+    images = [(f.filename, await _read_image(f)) for f in files]  # validate all before saving
+    folder = UPLOAD_DIR / label
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, data in images:
+        path = folder / f"{uuid.uuid4().hex[:8]}_{Path(name).name}"
+        path.write_bytes(data)
+        db.add_upload(path.name, label, path)
+    return {"saved": len(images), "label": label}
+
+
+def _retrain_job(run_id):
+    try:
+        uploads = db.get_unused_uploads()
+        new = pd.DataFrame({"filename": [u["path"] for u in uploads], "label": [u["label"] for u in uploads]})
+        splits = load_splits()
+        train = splits[splits.split == "train"]
+        orig = train.sample(min(ORIGINAL_SAMPLE, len(train)), random_state=42)
+        orig = orig.assign(filename=[str(TRAIN_DIR / f) for f in orig.filename])[["filename", "label"]]
+        data = pd.concat([new, orig], ignore_index=True)
+        val_df = splits[splits.split == "val"]
+        test_df = splits[splits.split == "test"]
+
+        old_model, class_names = prediction.get_model()
+        test_ds = make_dataset(test_df, class_names, TRAIN_DIR)
+        old_f1 = hm.evaluate(old_model, test_ds)["f1"]
+
+        old_version = _metadata().get("version", 1)
+        version = old_version + 1
+        cand = hm.MODELS_DIR / "versions" / f"v{version}"
+        cand.mkdir(parents=True, exist_ok=True)
+        for f in MODEL_FILES:
+            if (hm.MODELS_DIR / f).exists():
+                shutil.copy2(hm.MODELS_DIR / f, cand / f)
+        hm.retrain(cand / "har_model.h5", data, image_dir=TRAIN_DIR, val_df=val_df)
+
+        new_model, _ = hm.load_model(cand)
+        metrics = hm.evaluate(new_model, test_ds)
+        promote = metrics["f1"] >= old_f1
+        meta = json.loads((cand / "metadata.json").read_text())
+        meta.update({"version": version, "metrics": metrics, "promoted": promote})
+        (cand / "metadata.json").write_text(json.dumps(meta, indent=2))
+        if promote:
+            for f in MODEL_FILES:
+                shutil.copy2(cand / f, hm.MODELS_DIR / f)
+            prediction.reload_model()
+        db.mark_used([u["id"] for u in uploads])
+        db.update_run(run_id, status="done", finished_at=db.now(), old_f1=old_f1, new_f1=metrics["f1"],
+                      promoted=int(promote), model_version=version if promote else old_version,
+                      message="promoted" if promote else "new model had lower macro F1; kept old model")
+    except Exception as e:
+        db.update_run(run_id, status="failed", finished_at=db.now(), message=str(e))
+
+
+@app.post("/retrain")
+def retrain(background: BackgroundTasks):
+    if not _model_ready():
+        raise HTTPException(503, "No trained model found in models/ to fine-tune.")
+    if db.is_retraining():
+        raise HTTPException(409, "A retraining run is already in progress.")
+    n = len(db.get_unused_uploads())
+    if n == 0:
+        raise HTTPException(400, "No unused uploads. Upload labelled images with POST /upload first.")
+    run_id = db.create_run(n)
+    background.add_task(_retrain_job, run_id)
+    return {"run_id": run_id, "status": "running", "n_uploads": n}
+
+
+@app.get("/retrain/status")
+def retrain_status():
+    return db.latest_run() or {"status": "never_run"}
+
+
+@app.get("/metrics")
+def metrics():
+    n = stats["predictions"]
+    meta = _metadata()
+    return {"model_version": meta.get("version", 1) if meta else None,
+            "model_metrics": meta.get("metrics", {}),
+            "predictions_served": n,
+            "avg_latency_seconds": round(stats["total_latency"] / n, 4) if n else None,
+            "uploads": db.upload_counts(),
+            "retrain_runs": db.run_count()}
