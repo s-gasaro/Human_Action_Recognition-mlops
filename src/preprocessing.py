@@ -43,8 +43,9 @@ def preprocess_image(img):
     return tf.keras.applications.mobilenet_v2.preprocess_input(tf.cast(img, tf.float32))
 
 
-def make_dataset(df, class_names, image_dir=TRAIN_DIR, training=False, batch_size=BATCH_SIZE):
-    """tf.data pipeline from a (filename, label) DataFrame."""
+def make_dataset(df, class_names, image_dir=TRAIN_DIR, training=False, batch_size=BATCH_SIZE, augment=None):
+    """tf.data pipeline from a (filename, label) DataFrame; augment defaults to training."""
+    augment = training if augment is None else augment
     paths = [str(Path(image_dir) / f) for f in df["filename"]]
     idx = {c: i for i, c in enumerate(class_names)}
     labels = [idx[l] for l in df["label"]]
@@ -58,7 +59,7 @@ def make_dataset(df, class_names, image_dir=TRAIN_DIR, training=False, batch_siz
         return img, tf.one_hot(label, len(class_names))
 
     ds = ds.map(load, num_parallel_calls=AUTOTUNE).batch(batch_size)
-    if training:
+    if augment:
         aug = augmentation()
         ds = ds.map(lambda x, y: (aug(x, training=True), y), num_parallel_calls=AUTOTUNE)
     ds = ds.map(lambda x, y: (preprocess_image(x), y), num_parallel_calls=AUTOTUNE)

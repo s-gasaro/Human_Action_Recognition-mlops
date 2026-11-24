@@ -28,6 +28,16 @@ def build_model(num_classes, dropout=0.3, lr=1e-3):
     return model
 
 
+def unfreeze(model, n_layers=30, lr=1e-5):
+    """Unfreeze the top n_layers of the base model and recompile with a low LR."""
+    base = next(l for l in model.layers if isinstance(l, tf.keras.Model))
+    base.trainable = True
+    for layer in base.layers[:-n_layers]:
+        layer.trainable = False
+    model.compile(optimizer=tf.keras.optimizers.Adam(lr),
+                  loss="categorical_crossentropy", metrics=["accuracy"])
+
+
 def _callbacks():
     return [
         tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=4, restore_best_weights=True),
@@ -73,12 +83,7 @@ def retrain(model_path, new_data, image_dir=TRAIN_DIR, val_df=None, epochs=5, lr
     models_dir = model_path.parent
     model, class_names = load_model(models_dir)
 
-    base = next(l for l in model.layers if isinstance(l, tf.keras.Model))
-    base.trainable = True
-    for layer in base.layers[:-30]:
-        layer.trainable = False
-    model.compile(optimizer=tf.keras.optimizers.Adam(lr),
-                  loss="categorical_crossentropy", metrics=["accuracy"])
+    unfreeze(model, 30, lr)
 
     train_ds = make_dataset(new_data, class_names, image_dir, training=True)
     if val_df is not None:
