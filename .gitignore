@@ -221,3 +221,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# dataset (too large for GitHub, download from Kaggle)
+data/train/*
+data/test/*
+!data/train/.gitkeep
+!data/test/.gitkeep
+
+# runtime files
+uploads/
+*.db
