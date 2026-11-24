@@ -15,14 +15,17 @@ from PIL import Image
 import database as db
 import model as hm
 import prediction
-from preprocessing import TRAIN_DIR, load_splits, make_dataset
+from preprocessing import DATA_DIR, make_dataset
 
 ROOT = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = ROOT / "uploads"
 MODEL_FILES = ("har_model.h5", "class_names.json", "metadata.json")
 ALLOWED_EXT = {".jpg", ".jpeg", ".png"}
 MAX_BYTES = 10 * 1024 * 1024
-ORIGINAL_SAMPLE = 1000
+RETRAIN_EPOCHS = 3
+RETRAIN_BATCH = 16
+EVAL_DIR = DATA_DIR / "eval"
+REPLAY_DIR = DATA_DIR / "replay"
 
 app = FastAPI(title="Human Action Recognition API")
 START = time.time()
@@ -99,17 +102,14 @@ def _retrain_job(run_id):
     try:
         uploads = db.get_unused_uploads()
         new = pd.DataFrame({"filename": [u["path"] for u in uploads], "label": [u["label"] for u in uploads]})
-        splits = load_splits()
-        train = splits[splits.split == "train"]
-        orig = train.sample(min(ORIGINAL_SAMPLE, len(train)), random_state=42)
-        orig = orig.assign(filename=[str(TRAIN_DIR / f) for f in orig.filename])[["filename", "label"]]
-        data = pd.concat([new, orig], ignore_index=True)
-        val_df = splits[splits.split == "val"]
-        test_df = splits[splits.split == "test"]
+        replay = pd.read_csv(REPLAY_DIR / "labels.csv")
+        replay["filename"] = [str(REPLAY_DIR / f) for f in replay["filename"]]
+        data = pd.concat([new, replay], ignore_index=True)
+        eval_df = pd.read_csv(EVAL_DIR / "labels.csv")
 
         old_model, class_names = prediction.get_model()
-        test_ds = make_dataset(test_df, class_names, TRAIN_DIR)
-        old_f1 = hm.evaluate(old_model, test_ds)["f1"]
+        eval_ds = make_dataset(eval_df, class_names, EVAL_DIR, batch_size=RETRAIN_BATCH)
+        old_f1 = hm.evaluate(old_model, eval_ds)["f1"]
 
         old_version = _metadata().get("version", 1)
         version = old_version + 1
@@ -118,10 +118,12 @@ def _retrain_job(run_id):
         for f in MODEL_FILES:
             if (hm.MODELS_DIR / f).exists():
                 shutil.copy2(hm.MODELS_DIR / f, cand / f)
-        hm.retrain(cand / "har_model.h5", data, image_dir=TRAIN_DIR, val_df=val_df)
+        db.update_run(run_id, epoch=0, epochs=RETRAIN_EPOCHS)
+        hm.retrain(cand / "har_model.h5", data, epochs=RETRAIN_EPOCHS, batch_size=RETRAIN_BATCH,
+                   on_epoch=lambda e, n: db.update_run(run_id, epoch=e, epochs=n))
 
         new_model, _ = hm.load_model(cand)
-        metrics = hm.evaluate(new_model, test_ds)
+        metrics = hm.evaluate(new_model, eval_ds)
         promote = metrics["f1"] >= old_f1
         meta = json.loads((cand / "metadata.json").read_text())
         meta.update({"version": version, "metrics": metrics, "promoted": promote})
@@ -155,6 +157,19 @@ def retrain(background: BackgroundTasks):
 @app.get("/retrain/status")
 def retrain_status():
     return db.latest_run() or {"status": "never_run"}
+
+
+@app.get("/insights")
+def insights():
+    path = hm.MODELS_DIR / "insights.json"
+    if not path.exists():
+        raise HTTPException(404, "models/insights.json not found. Run `python src/insights.py` first.")
+    return json.loads(path.read_text())
+
+
+@app.get("/retrain/history")
+def retrain_history():
+    return db.list_runs()
 
 
 @app.get("/metrics")

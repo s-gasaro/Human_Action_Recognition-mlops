@@ -24,6 +24,11 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, status TEXT, started_at TEXT, finished_at TEXT,
             n_uploads INTEGER, old_f1 REAL, new_f1 REAL, promoted INTEGER, model_version INTEGER,
             message TEXT)""")
+        for col in ("epoch", "epochs"):
+            try:
+                c.execute(f"ALTER TABLE retrain_runs ADD COLUMN {col} INTEGER")
+            except Exception:
+                pass  # column already exists
         c.execute("UPDATE retrain_runs SET status='failed', message='interrupted by restart' "
                   "WHERE status='running'")
 
@@ -77,3 +82,8 @@ def latest_run():
 def run_count():
     with _conn() as c:
         return c.execute("SELECT COUNT(*) FROM retrain_runs").fetchone()[0]
+
+
+def list_runs(limit=50):
+    with _conn() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM retrain_runs ORDER BY id DESC LIMIT ?", (limit,))]

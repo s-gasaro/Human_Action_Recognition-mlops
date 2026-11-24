@@ -77,21 +77,29 @@ def load_model(models_dir=MODELS_DIR):
     return model, class_names
 
 
-def retrain(model_path, new_data, image_dir=TRAIN_DIR, val_df=None, epochs=5, lr=1e-5):
-    """Fine-tune the saved model on new_data (DataFrame: filename,label); saves in place."""
+def retrain(model_path, new_data, image_dir=TRAIN_DIR, val_df=None, epochs=3, lr=1e-5,
+            batch_size=16, on_epoch=None):
+    """Fine-tune the saved model on new_data (DataFrame: filename,label); saves in place.
+
+    on_epoch(epoch, epochs) is called after each epoch (used to report progress).
+    """
     model_path = Path(model_path)
     models_dir = model_path.parent
     model, class_names = load_model(models_dir)
 
     unfreeze(model, 30, lr)
 
-    train_ds = make_dataset(new_data, class_names, image_dir, training=True)
+    train_ds = make_dataset(new_data, class_names, image_dir, training=True, batch_size=batch_size)
+    callbacks = []
+    if on_epoch:
+        callbacks.append(tf.keras.callbacks.LambdaCallback(
+            on_epoch_end=lambda epoch, logs: on_epoch(epoch + 1, epochs)))
     if val_df is not None:
-        val_ds = make_dataset(val_df, class_names, image_dir)
-        train(model, train_ds, val_ds, epochs)
+        val_ds = make_dataset(val_df, class_names, image_dir, batch_size=batch_size)
+        model.fit(train_ds, validation_data=val_ds, epochs=epochs, callbacks=callbacks + _callbacks(), verbose=2)
         metrics = evaluate(model, val_ds)
     else:
-        model.fit(train_ds, epochs=epochs)
+        model.fit(train_ds, epochs=epochs, callbacks=callbacks, verbose=2)
         metrics = None
     save_model(model, class_names, metrics, models_dir)
     return metrics
