@@ -11,6 +11,8 @@ services:
         value: /tmp/app.db
       - key: UPLOAD_DIR
         value: /tmp/uploads
+      - key: ALLOW_RETRAIN
+        value: "false"
   - type: web
     name: har-ui
     runtime: docker

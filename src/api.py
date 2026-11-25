@@ -25,6 +25,7 @@ UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", ROOT / "uploads"))
 MODEL_FILES = ("har_model.h5", "class_names.json", "metadata.json")
 ALLOWED_EXT = {".jpg", ".jpeg", ".png"}
 MAX_BYTES = 10 * 1024 * 1024
+RETRAIN_ENABLED = os.getenv("ALLOW_RETRAIN", "true").strip().lower() not in ("0", "false", "no", "off")
 RETRAIN_EPOCHS = 3
 RETRAIN_BATCH = 8
 EVAL_DIR = DATA_DIR / "eval"
@@ -70,7 +71,8 @@ async def _read_image(file: UploadFile):
 def health():
     return {"status": "ok" if _model_ready() else "no_model",
             "model_version": _metadata().get("version", 1) if _model_ready() else None,
-            "uptime_seconds": round(time.time() - START, 1)}
+            "uptime_seconds": round(time.time() - START, 1),
+            "retrain_enabled": RETRAIN_ENABLED}
 
 
 @app.post("/predict")
@@ -158,6 +160,9 @@ def _retrain_job(run_id):
 
 @app.post("/retrain")
 def retrain(background: BackgroundTasks):
+    if not RETRAIN_ENABLED:
+        raise HTTPException(503, "Retraining is disabled on this deployment (ALLOW_RETRAIN=false). "
+                                 "Run the Docker deployment to retrain.")
     if not _model_ready():
         raise HTTPException(503, "No trained model found in models/ to fine-tune.")
     if db.is_retraining():

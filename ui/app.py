@@ -152,6 +152,10 @@ def upload_retrain():
     st.subheader("2. Retrain")
     st.caption(f"Current model: v{health['model_version']}. "
                "The new model is promoted only if its test macro F1 is not lower.")
+    if not health.get("retrain_enabled", True):
+        st.info("Retraining runs in the Docker deployment; the free cloud tier "
+                "(512 MB RAM, 0.1 CPU) is too small for training.")
+        return
     if st.button("Retrain", type="primary"):
         api("POST", "/retrain")
     if api("GET", "/retrain/status").get("status") == "running":
