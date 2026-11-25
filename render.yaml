@@ -19,7 +19,4 @@ services:
     dockerContext: .
     envVars:
       - key: API_URL
-        fromService:
-          type: web
-          name: har-api
-          property: host
+        value: https://har-api-8g57.onrender.com
