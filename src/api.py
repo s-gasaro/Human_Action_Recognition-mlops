@@ -14,16 +14,13 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadF
 from PIL import Image
 
 import database as db
-import model as hm
 import prediction
-from preprocessing import DATA_DIR, make_dataset
 
-import tensorflow as tf
-
-tf.config.threading.set_intra_op_parallelism_threads(1)  # keep memory low (512 MB host)
-tf.config.threading.set_inter_op_parallelism_threads(1)
-
+# NOTE: TensorFlow (model.py / preprocessing.py) is imported lazily inside the retrain job only,
+# so the API process serving /predict stays small enough for a 512 MB host.
 ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / "data"
+MODELS_DIR = prediction.MODELS_DIR
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", ROOT / "uploads"))
 MODEL_FILES = ("har_model.h5", "class_names.json", "metadata.json")
 ALLOWED_EXT = {".jpg", ".jpeg", ".png"}
@@ -46,12 +43,12 @@ def startup():
 
 
 def _metadata():
-    path = hm.MODELS_DIR / "metadata.json"
+    path = MODELS_DIR / "metadata.json"
     return json.loads(path.read_text()) if path.exists() else {}
 
 
 def _model_ready():
-    return (hm.MODELS_DIR / "har_model.h5").exists()
+    return (MODELS_DIR / "har_model.tflite").exists()
 
 
 async def _read_image(file: UploadFile):
@@ -92,7 +89,7 @@ async def predict(file: UploadFile = File(...)):
 async def upload(files: list[UploadFile] = File(...), label: str = Form(...)):
     if not _model_ready():
         raise HTTPException(503, "No trained model found, so valid labels are unknown.")
-    _, class_names = prediction.get_model()
+    class_names = prediction.get_classes()
     if label not in class_names:
         raise HTTPException(400, f"Unknown label {label}. Valid labels: {class_names}")
     images = [(f.filename, await _read_image(f)) for f in files]  # validate all before saving
@@ -107,6 +104,13 @@ async def upload(files: list[UploadFile] = File(...), label: str = Form(...)):
 
 def _retrain_job(run_id):
     try:
+        import tensorflow as tf
+        import model as hm
+        from preprocessing import make_dataset
+        from tflite_convert import convert
+        tf.config.threading.set_intra_op_parallelism_threads(1)  # keep memory low (512 MB host)
+        tf.config.threading.set_inter_op_parallelism_threads(1)
+
         uploads = db.get_unused_uploads()
         new = pd.DataFrame({"filename": [u["path"] for u in uploads], "label": [u["label"] for u in uploads]})
         replay = pd.read_csv(REPLAY_DIR / "labels.csv")
@@ -114,17 +118,17 @@ def _retrain_job(run_id):
         data = pd.concat([new, replay], ignore_index=True)
         eval_df = pd.read_csv(EVAL_DIR / "labels.csv")
 
-        old_model, class_names = prediction.get_model()
+        old_model, class_names = hm.load_model(MODELS_DIR)
         eval_ds = make_dataset(eval_df, class_names, EVAL_DIR, batch_size=RETRAIN_BATCH)
         old_f1 = hm.evaluate(old_model, eval_ds)["f1"]
 
         old_version = _metadata().get("version", 1)
         version = old_version + 1
-        cand = hm.MODELS_DIR / "versions" / f"v{version}"
+        cand = MODELS_DIR / "versions" / f"v{version}"
         cand.mkdir(parents=True, exist_ok=True)
         for f in MODEL_FILES:
-            if (hm.MODELS_DIR / f).exists():
-                shutil.copy2(hm.MODELS_DIR / f, cand / f)
+            if (MODELS_DIR / f).exists():
+                shutil.copy2(MODELS_DIR / f, cand / f)
         db.update_run(run_id, epoch=0, epochs=RETRAIN_EPOCHS)
         hm.retrain(cand / "har_model.h5", data, epochs=RETRAIN_EPOCHS, batch_size=RETRAIN_BATCH,
                    on_epoch=lambda e, n: db.update_run(run_id, epoch=e, epochs=n))
@@ -137,8 +141,13 @@ def _retrain_job(run_id):
         (cand / "metadata.json").write_text(json.dumps(meta, indent=2))
         if promote:
             for f in MODEL_FILES:
-                shutil.copy2(cand / f, hm.MODELS_DIR / f)
+                if f != "metadata.json":
+                    shutil.copy2(cand / f, MODELS_DIR / f)
+            convert(MODELS_DIR / "har_model.h5", MODELS_DIR / "har_model.tflite")
+            shutil.copy2(cand / "metadata.json", MODELS_DIR / "metadata.json")  # last: replicas reload on version change
             prediction.reload_model()
+            del old_model, new_model
+            tf.keras.backend.clear_session()
         db.mark_used([u["id"] for u in uploads])
         db.update_run(run_id, status="done", finished_at=db.now(), old_f1=old_f1, new_f1=metrics["f1"],
                       promoted=int(promote), model_version=version if promote else old_version,
@@ -168,7 +177,7 @@ def retrain_status():
 
 @app.get("/insights")
 def insights():
-    path = hm.MODELS_DIR / "insights.json"
+    path = MODELS_DIR / "insights.json"
     if not path.exists():
         raise HTTPException(404, "models/insights.json not found. Run `python src/insights.py` first.")
     return json.loads(path.read_text())
