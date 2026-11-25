@@ -18,13 +18,18 @@ import model as hm
 import prediction
 from preprocessing import DATA_DIR, make_dataset
 
+import tensorflow as tf
+
+tf.config.threading.set_intra_op_parallelism_threads(1)  # keep memory low (512 MB host)
+tf.config.threading.set_inter_op_parallelism_threads(1)
+
 ROOT = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", ROOT / "uploads"))
 MODEL_FILES = ("har_model.h5", "class_names.json", "metadata.json")
 ALLOWED_EXT = {".jpg", ".jpeg", ".png"}
 MAX_BYTES = 10 * 1024 * 1024
 RETRAIN_EPOCHS = 3
-RETRAIN_BATCH = 16
+RETRAIN_BATCH = 8
 EVAL_DIR = DATA_DIR / "eval"
 REPLAY_DIR = DATA_DIR / "replay"
 

@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: har-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: DB_PATH
+        value: /tmp/app.db
+      - key: UPLOAD_DIR
+        value: /tmp/uploads
+  - type: web
+    name: har-ui
+    runtime: docker
+    plan: free
+    dockerfilePath: ./ui/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: API_URL
+        fromService:
+          type: web
+          name: har-api
+          property: host

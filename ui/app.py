@@ -8,6 +8,8 @@ import requests
 import streamlit as st
 
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+if not API_URL.startswith(("http://", "https://")):  # Render's fromService host has no scheme
+    API_URL = f"https://{API_URL}"
 CLASSES = ["calling", "clapping", "cycling", "dancing", "drinking", "eating", "fighting", "hugging",
            "laughing", "listening_to_music", "running", "sitting", "sleeping", "texting", "using_laptop"]
 
