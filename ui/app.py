@@ -30,13 +30,16 @@ def api(method, path, **kw):
         r = requests.request(method, f"{API_URL}{path}", timeout=kw.pop("timeout", 30), **kw)
     except requests.RequestException:
         raise ApiDown
+    if r.status_code >= 500:  # e.g. Render's HTML 502 page while the free service wakes up
+        raise ApiDown
+    try:
+        body = r.json()
+    except ValueError:  # not JSON (HTML page etc.): never show the raw body
+        raise ApiDown
     if r.status_code >= 400:
-        try:
-            detail = r.json().get("detail", r.text)
-        except ValueError:
-            detail = r.text
+        detail = body.get("detail", "Request failed.") if isinstance(body, dict) else "Request failed."
         raise RuntimeError(detail)
-    return r.json()
+    return body
 
 
 def guard(fn):
@@ -44,8 +47,8 @@ def guard(fn):
     try:
         fn()
     except ApiDown:
-        st.error(f"Cannot reach the API at {API_URL}. Start it with "
-                 "`uvicorn src.api:app --port 8000` or set the API_URL environment variable.")
+        st.error("The API is waking up (free hosting sleeps after inactivity). "
+                 "Please wait ~1 minute and refresh.")
     except RuntimeError as e:
         st.error(str(e))
 

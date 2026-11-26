@@ -6,7 +6,7 @@ Human activity recognition from still images, with 15 activity classes (calling,
 
 ## Links
 
-- **Video demo:** [YOUTUBE_LINK_HERE](https://youtu.be/qcz05JhDoUA)
+- **Video demo:** [Watch on YouTube](https://youtu.be/qcz05JhDoUA)
 - **Live UI:** https://har-ui.onrender.com
 - **API docs:** https://har-api-8g57.onrender.com/docs
 
@@ -20,7 +20,7 @@ The full images are **not** in this repo. Download them from Kaggle into `data/t
 
 ## Model results
 
-MobileNetV2 transfer learning (ImageNet weights). The best model is the fine-tuned one (last layers unfrozen, lr 1e-4). Test set results:
+MobileNetV2 transfer learning (ImageNet weights). The best model is the fine-tuned one (top 50 layers unfrozen, lr 1e-4). Test set results:
 
 | Accuracy | Macro F1 | Precision | Recall |
 |---|---|---|---|
