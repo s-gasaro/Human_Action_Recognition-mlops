@@ -6,7 +6,7 @@ Human activity recognition from still images, with 15 activity classes (calling,
 
 ## Links
 
-- **Video demo:** YOUTUBE_LINK_HERE
+- **Video demo:** [YOUTUBE_LINK_HERE](https://youtu.be/qcz05JhDoUA)
 - **Live UI:** https://har-ui.onrender.com
 - **API docs:** https://har-api-8g57.onrender.com/docs
 
